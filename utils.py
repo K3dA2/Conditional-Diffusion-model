@@ -5,6 +5,13 @@ import cv2
 import matplotlib.pyplot as plt
 import uuid
 
+device = "cpu"
+if torch.cuda.is_available():
+    device = "cuda"
+elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+    device = "mps"
+print(f"using device: {device}")
+
 def get_data(path):
     image_extensions = ['.jpg','.png']
     image_names = []
@@ -70,7 +77,7 @@ def forward_cosine_noise(key, x_0, t):
     noisy_image = reshaped_signal_rates  * ((x_0 - 127.5)/127.5) + reshaped_noise_rates * noise
     return noisy_image, noise
 
-def forward_cosine_noise(key, x_0, t,device = 'mps'):
+def forward_cosine_noise(key, x_0, t,device = device):
     set_key(key)
     # Ensure x_0 is a tensor and on the correct device before operations
     x_0 = x_0.to(device)
@@ -117,7 +124,7 @@ def forward_noise_test():
 def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
-def reverse_diffusion(model, diffusion_steps, device='mps', show = False, size = (32,32)):
+def reverse_diffusion(model, diffusion_steps, device=device, show = False, size = (32,32)):
     step_size = 1.0 / diffusion_steps
     current_images = torch.randn(1, 3, size[0], size[1]).to(device)
     model.eval()
@@ -163,7 +170,7 @@ def reverse_diffusion(model, diffusion_steps, device='mps', show = False, size =
         plt.imshow(np.transpose(pred_images[-1].cpu().numpy(), (1, 2, 0)))
         plt.show()
 
-def reverse_diffusion_cfg(model, diffusion_steps, category, cfg_scale, device='mps', show = False, size = (32,32)):
+def reverse_diffusion_cfg(model, diffusion_steps, category, cfg_scale, device=device, show = False, size = (32,32)):
     step_size = 1.0 / diffusion_steps
     current_images = torch.randn(1, 3, size[0], size[1]).to(device)
     model.eval()
