@@ -15,10 +15,10 @@ class ResNet(nn.Module):
         self.in_channels = in_channels
         self.network = nn.Sequential(
             nn.BatchNorm2d(in_channels),
-            nn.ReLU(),
+            nn.GELU(),
             nn.Conv2d(in_channels, out_channels*2, kernel_size=3, padding=1),
             nn.BatchNorm2d(out_channels*2),
-            nn.ReLU(),
+            nn.GELU(),
             nn.Conv2d(out_channels*2, in_channels, kernel_size=3, padding=1)
         )
 
@@ -62,6 +62,12 @@ class SelfAttention(nn.Module):
         self.channels = channels
         self.mha = nn.MultiheadAttention(channels, 4, batch_first=True)
         self.ln = nn.LayerNorm([channels])
+        self.ff_self = nn.Sequential(
+            nn.LayerNorm([channels]),
+            nn.Linear(channels, channels),
+            nn.GELU(),
+            nn.Linear(channels, channels),
+        )
 
     def forward(self, x):
         x_size = x.shape[-1]
@@ -70,6 +76,7 @@ class SelfAttention(nn.Module):
         x_ln = self.ln(x)
         attention_value, _ = self.mha(x_ln, x_ln, x_ln)
         attention_value = attention_value + x
+        attention_value = self.ff_self(attention_value) + attention_value
         return attention_value.swapaxes(2, 1).reshape(batch_size, -1, x_size, x_size)
     
 class Attention(nn.Module):
@@ -111,8 +118,8 @@ class DownBlock(nn.Module):
     def forward(self,img,t):
         proj = self.proj(t)
         proj_exp = proj.view(proj.size(0),proj.size(1),1,1)
-        out = F.relu(self.inResnet(img))
-        out = F.relu(self.outResnet(out))
+        out = F.gelu(self.inResnet(img))
+        out = F.gelu(self.outResnet(out))
         out = torch.add(out, proj_exp)
         if(self.use_att):
             out = self.att(out)
@@ -145,8 +152,8 @@ class UpBlock(nn.Module):
         out = torch.cat((img,skip),dim=1)
         
         out = self.batchnorm(img)
-        out = F.relu(self.inResnet.forward(out))
-        out = F.relu(self.outResnet(out))
+        out = F.gelu(self.inResnet.forward(out))
+        out = F.gelu(self.outResnet(out))
         out = torch.add(out, proj_exp)
         if(self.use_att):
             out = self.att(out)
