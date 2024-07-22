@@ -121,11 +121,10 @@ class DownBlock(nn.Module):
         out = F.gelu(self.inResnet(img))
         out = F.gelu(self.outResnet(out))
         out = torch.add(out, proj_exp)
-        if(self.use_att):
-            out = self.att(out)
-        #skip = out
         out = self.maxpool(out)
         out = self.out_conv(out)
+        if(self.use_att):
+            out = self.att(out)
         return out,out
 
 class UpBlock(nn.Module):
@@ -155,11 +154,11 @@ class UpBlock(nn.Module):
         out = F.gelu(self.inResnet.forward(out))
         out = F.gelu(self.outResnet(out))
         out = torch.add(out, proj_exp)
-        if(self.use_att):
-            out = self.att(out)
         out = self.up(out)
         
         out = self.out_conv(out)
+        if(self.use_att):
+            out = self.att(out)
         return out
 
 class MidBlock(nn.Module):
