@@ -124,7 +124,7 @@ def forward_noise_test():
 def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
-def reverse_diffusion(model, diffusion_steps, device=device, show = False, size = (32,32)):
+def reverse_diffusion(model, diffusion_steps, device=device, show = True, size = (32,32)):
     step_size = 1.0 / diffusion_steps
     current_images = torch.randn(1, 3, size[0], size[1]).to(device)
     model.eval()
@@ -136,7 +136,7 @@ def reverse_diffusion(model, diffusion_steps, device=device, show = False, size 
             # Ensure model and other  operations are also moved to the device
             pred_noises = model(current_images, diffusion_times)
             noise_rates, signal_rates = cosine((diffusion_times.to("cpu")))
-            #save_img(pred_noises,'Noise/',t = diffusion_times)
+            save_img(pred_noises,'/Users/ayanfe/Documents/Code/Conditional-Diffusion-model/Noise/',t = diffusion_times)
 
             pred_noises = pred_noises.to(device)  # Move to the specified device
             noise_rates = noise_rates.to(device)  # Move to the specified device
@@ -242,3 +242,31 @@ def save_img(img,path,t,timesteps=1000):
     full_path = os.path.join(save_directory, random_filename)
     # Save the image with the random filename
     plt.savefig(full_path, bbox_inches='tight', pad_inches=0)
+
+
+class EMA:
+    def __init__(self, beta):
+        super().__init__()
+        self.beta = beta
+        self.step = 0
+
+    def update_model_average(self, ma_model, current_model):
+        for current_params, ma_params in zip(current_model.parameters(), ma_model.parameters()):
+            old_weight, up_weight = ma_params.data, current_params.data
+            ma_params.data = self.update_average(old_weight, up_weight)
+
+    def update_average(self, old, new):
+        if old is None:
+            return new
+        return old * self.beta + (1 - self.beta) * new
+
+    def step_ema(self, ema_model, model, step_start_ema=2000):
+        if self.step < step_start_ema:
+            self.reset_parameters(ema_model, model)
+            self.step += 1
+            return
+        self.update_model_average(ema_model, model)
+        self.step += 1
+
+    def reset_parameters(self, ema_model, model):
+        ema_model.load_state_dict(model.state_dict())

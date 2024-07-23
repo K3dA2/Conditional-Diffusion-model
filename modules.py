@@ -14,17 +14,21 @@ class ResNet(nn.Module):
         self.num_channels = out_channels
         self.in_channels = in_channels
         self.network = nn.Sequential(
-            nn.BatchNorm2d(in_channels),
-            nn.GELU(),
-            nn.Conv2d(in_channels, out_channels*2, kernel_size=3, padding=1),
-            nn.BatchNorm2d(out_channels*2),
-            nn.GELU(),
-            nn.Conv2d(out_channels*2, in_channels, kernel_size=3, padding=1)
+            nn.GroupNorm(4,in_channels),
+            nn.SiLU(),
+            nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1),
+            nn.GroupNorm(4,out_channels),
+            nn.SiLU(),
+            nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1)
         )
+        if in_channels == out_channels:
+            self.residual_layer = nn.Identity()
+        else:
+            self.residual_layer = nn.Conv2d(in_channels, out_channels, kernel_size=1, padding=0)
 
     def forward(self, x):
         out = self.network(x)
-        return torch.add(out,x)
+        return torch.add(out,self.residual_layer(x))
 
 '''
 Time Embedding class uses sinusodial embedding to input time information into the NN
@@ -105,24 +109,21 @@ class DownBlock(nn.Module):
         self.out_channels = out_channels
         self.maxpool = nn.MaxPool2d(2)
         self.inResnet = ResNet(in_channels,out_channels)
-        self.outResnet = ResNet(in_channels,out_channels)
-        self.out_conv = nn.Conv2d(in_channels,out_channels,1)
+        self.outResnet = ResNet(out_channels,out_channels)
         self.att = SelfAttention(out_channels)
         self.proj = nn.Sequential(
-            nn.Linear(32,in_channels),
             nn.SiLU(),
-            nn.Linear(in_channels,in_channels),
+            nn.Linear(32,in_channels)
         )
         self.use_att = use_att
         
     def forward(self,img,t):
         proj = self.proj(t)
         proj_exp = proj.view(proj.size(0),proj.size(1),1,1)
-        out = F.gelu(self.inResnet(img))
-        out = F.gelu(self.outResnet(out))
-        out = torch.add(out, proj_exp)
+        out = torch.add(img, proj_exp)
+        out = F.silu(self.inResnet(out))
+        out = self.outResnet(out)
         out = self.maxpool(out)
-        out = self.out_conv(out)
         if(self.use_att):
             out = self.att(out)
         return out,out
@@ -132,15 +133,12 @@ class UpBlock(nn.Module):
         super().__init__()
         self.in_channels = in_channels
         self.out_channels = out_channels
-        self.inResnet = ResNet(in_channels,out_channels)
-        self.batchnorm = nn.BatchNorm2d(in_channels)
+        self.inResnet = ResNet(in_channels*2,out_channels)
         self.att = SelfAttention(in_channels)
-        self.outResnet = ResNet(in_channels,out_channels)
-        self.out_conv = nn.Conv2d(in_channels,out_channels,1)
+        self.outResnet = ResNet(out_channels,out_channels)
         self.proj = nn.Sequential(
-            nn.Linear(32,in_channels),
             nn.SiLU(),
-            nn.Linear(in_channels,in_channels),
+            nn.Linear(32,in_channels*2)
         )
         self.up = nn.Upsample(scale_factor=2, mode="bilinear", align_corners=True)
         self.use_att = use_att
@@ -150,13 +148,12 @@ class UpBlock(nn.Module):
         proj_exp = proj.view(proj.size(0),proj.size(1),1,1)
         out = torch.cat((img,skip),dim=1)
         
-        out = self.batchnorm(img)
-        out = F.gelu(self.inResnet.forward(out))
-        out = F.gelu(self.outResnet(out))
         out = torch.add(out, proj_exp)
+
+        out = F.silu(self.inResnet(out))
+        out = self.outResnet(out)
         out = self.up(out)
-        
-        out = self.out_conv(out)
+
         if(self.use_att):
             out = self.att(out)
         return out
@@ -168,26 +165,24 @@ class MidBlock(nn.Module):
         self.out_channels = out_channels
         self.inResnet = ResNet(in_channels,out_channels)
         self.att = Attention(in_dim=out_channels)
-        self.outResnet = ResNet(in_channels,out_channels)
+        self.outResnet = ResNet(out_channels,out_channels)
         self.out_conv = nn.Conv2d(in_channels,out_channels,1)
         self.proj = nn.Sequential(
-            nn.Linear(32,in_channels),
             nn.SiLU(),
-            nn.Linear(in_channels,out_channels),
+            nn.Linear(32,in_channels)
         )
         self.use_att = use_att
         
     def forward(self,img,t):
         proj = self.proj(t)
         proj_exp = proj.view(proj.size(0),proj.size(1),1,1)
-        
-        out = self.inResnet.forward(img)
+        out = torch.add(img, proj_exp)
+
+        out = F.silu(self.inResnet(out))
+        out = self.outResnet(out)
         if(self.use_att):
             out = self.att.forward(out)
-        out = self.outResnet(out)
-        out = self.out_conv(out)
-        out = torch.add(out, proj_exp)
-        
+
         return out
 
         
