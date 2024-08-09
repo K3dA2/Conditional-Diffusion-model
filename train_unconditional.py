@@ -9,9 +9,9 @@ from tqdm import tqdm
 import datetime
 import os
 import torch.nn.utils as utils
-from model import UnetConditional,Unet
+from model import UnetConditional,Unet,Config
 from utils import forward_cosine_noise, reverse_diffusion_cfg, count_parameters,reverse_diffusion, EMA
-import copy
+import matplotlib.pyplot as plt
 
 class CustomDataset(Dataset):
     def __init__(self, root_dir, transform=None):
@@ -84,6 +84,23 @@ def get_simple_data_loader(image_dir, batch_size, shuffle=True, num_workers=0):
     
     return data_loader
 
+def show_images_and_noise(images, noise, num_images=5):
+    images = images[:num_images].cpu().detach().numpy().transpose(0, 2, 3, 1)
+    noise = noise[:num_images].cpu().detach().numpy().transpose(0, 2, 3, 1)
+    
+    fig, axes = plt.subplots(2, num_images, figsize=(15, 6))
+    
+    for i in range(num_images):
+        axes[0, i].imshow((images[i] * 0.5) + 0.5)  # Denormalize to [0, 1]
+        axes[0, i].axis('off')
+        axes[0, i].set_title("Original Image")
+        
+        axes[1, i].imshow((noise[i] * 0.5) + 0.5)  # Denormalize to [0, 1]
+        axes[1, i].axis('off')
+        axes[1, i].set_title("Noise")
+
+    plt.show()
+
 
 def training_loop(n_epochs, optimizer, model, loss_fn, device, data_loader, max_grad_norm=1.0, timesteps=200, epoch_start=0, accumulation_steps=4):
     model.train()
@@ -100,8 +117,10 @@ def training_loop(n_epochs, optimizer, model, loss_fn, device, data_loader, max_
             # Generate timestamps
             t = torch.randint(0, timesteps, (imgs.size(0),), dtype=torch.float32).to(device) / timesteps
             t = t.view(-1, 1)
-
+            #print(t)
             imgs, noise = forward_cosine_noise(None, imgs, t, device= device)
+
+            #show_images_and_noise(imgs, noise, num_images=5)
 
             outputs = model(imgs, t)
 
@@ -123,8 +142,8 @@ def training_loop(n_epochs, optimizer, model, loss_fn, device, data_loader, max_
 
         print('{} Epoch {}, Training loss {}'.format(datetime.datetime.now(), epoch, loss_train / len(data_loader)))
         # Save model checkpoint every 20 epochs
-        if epoch % 10 == 0:
-            model_filename = f'cifar-diffusion-cts_epoch_cfg.pth'
+        if epoch % 5 == 0:
+            model_filename = f'cifar-diffusion-cts.pth'
             model_path = os.path.join('weights/', model_filename)
             torch.save({
                 'epoch': epoch,
@@ -147,15 +166,16 @@ if __name__ == '__main__':
     elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
         device = "mps"
     print(f"using device: {device}")
-    model = Unet()
+    config = Config(width=8)
+    model = Unet(config)
     model.to(device)
-    optimizer = optim.AdamW(model.parameters(), lr=3e-4, weight_decay=1e-4)
+    optimizer = optim.AdamW(model.parameters(), lr=3e-3)
     loss_fn = nn.MSELoss().to(device)
     print("param count: ", count_parameters(model))
     #ema = EMA(0.995)
     #ema_model = copy.deepcopy(model).eval().requires_grad_(False)
 
-    model_path = "weights/cifar-diffusion-cts_epoch_cfg.pth"
+    model_path = "weights/cifar-diffusion-cts.pth"
 
     # Optionally load model weights if needed
     #checkpoint = torch.load(model_path)
@@ -163,7 +183,7 @@ if __name__ == '__main__':
     #optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
     #epoch = checkpoint['epoch']
 
-    reverse_diffusion(model,50)
+    reverse_diffusion(model,30)
 
     #root_dir = '/Users/ayanfe/Downloads/archive-2/trainingSet/trainingSet'  # Replace with the path to your dataset
     #batch_size = 64
@@ -172,7 +192,7 @@ if __name__ == '__main__':
     image_dir = '/Users/ayanfe/Documents/Datasets/MNIST Upscaled/upscayl_png_realesrgan-x4plus_4x'  # Replace with your image directory path
     batch_size = 64
     dataloader = get_simple_data_loader(image_dir, batch_size)
-
+    
     training_loop(
         n_epochs=1000,
         optimizer=optimizer,
@@ -184,5 +204,6 @@ if __name__ == '__main__':
         epoch_start= epoch,
         accumulation_steps=1  # Adjust this value as needed
     )
+    
 
 
