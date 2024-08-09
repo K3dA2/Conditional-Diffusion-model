@@ -6,15 +6,18 @@ import unittest
 from modules import DownBlock,UpBlock,MidBlock,TimeEmb
 
 class Config:
-    def __init__(self, width=32, c_in=3, num_classes=10):
+    def __init__(self, width=32, c_in=3, num_classes=10, emb_dim = 3):
         self.width = width
         self.c_in = c_in
         self.num_classes = num_classes
+        self.emb_dim = emb_dim
+
 
 class UnetConditional(nn.Module):
     def __init__(self, config: Config) -> None:
         super().__init__()
         width = config.width
+        emb_dim = config.emb_dim
         c_in = config.c_in
         num_classes = config.num_classes
 
@@ -29,11 +32,12 @@ class UnetConditional(nn.Module):
         self.upblk2 = UpBlock(width * 2, width)
 
         self.in_conv = nn.Conv2d(c_in, width, padding=1, kernel_size=3)
-        self.res = nn.Conv2d(width, c_in, padding=1, kernel_size=3)
+        self.res = nn.Conv2d(width*2, c_in, padding=1, kernel_size=3)
         self.res.weight.data.fill_(0)
 
         self.timeEmb = TimeEmb()
-        self.label_emb = nn.Embedding(num_classes, width)
+        
+        self.label_emb = nn.Embedding(num_classes, 32)
 
     def forward(self, img, t, y=None):
         t = self.timeEmb(t)
@@ -42,6 +46,7 @@ class UnetConditional(nn.Module):
             t += class_emb
 
         out = self.in_conv(img)
+        x = out
         out, skip = self.downblk(out, t)
         out, skip1 = self.downblk1(out, t)
         out, skip2 = self.downblk2(out, t)
@@ -53,6 +58,7 @@ class UnetConditional(nn.Module):
         out = self.upblk1(out, skip1, t)
         out = self.upblk2(out, skip, t)
 
+        out = torch.cat((out,x),dim=1)
         out = self.res(out)
         return out
 
