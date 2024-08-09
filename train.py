@@ -9,50 +9,47 @@ from tqdm import tqdm
 import datetime
 import os
 import torch.nn.utils as utils
-from model import UnetConditional
+from model import UnetConditional,Config
 from utils import forward_cosine_noise, reverse_diffusion_cfg, count_parameters,reverse_diffusion
 import pandas as pd
 
-class CustomDataset(Dataset):
-    def __init__(self, root_dir, transform=None):
+# Define the list of classes
+classes = ['airplane', 'automobile', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship', 'truck']
+class_to_idx = {cls: idx for idx, cls in enumerate(classes)}
+
+# Custom dataset class
+class CustomImageDataset(Dataset):
+    def __init__(self, csv_file, root_dir, transform=None):
+        self.data_frame = pd.read_csv(csv_file)
+        self.data_frame.iloc[:, 0] = self.data_frame.iloc[:, 0].astype(str)  # Ensure the first column is string type
         self.root_dir = root_dir
         self.transform = transform
-        self.classes = sorted(os.listdir(root_dir))
-        self.image_paths = []
-        self.labels = []
-
-        for label, class_dir in enumerate(self.classes):
-            class_path = os.path.join(root_dir, class_dir)
-            if os.path.isdir(class_path):
-                for img_name in os.listdir(class_path):
-                    img_path = os.path.join(class_path, img_name)
-                    self.image_paths.append(img_path)
-                    self.labels.append(label)
-
+        
     def __len__(self):
-        return len(self.image_paths)
-
+        return len(self.data_frame)
+    
     def __getitem__(self, idx):
-        img_path = self.image_paths[idx]
-        label = self.labels[idx]
-        image = Image.open(img_path).convert('RGB')
+        img_name = os.path.join(self.root_dir, self.data_frame.iloc[idx, 0])
+        # Try adding common image extensions if the file is not found
+        if not os.path.exists(img_name):
+            for ext in ['.jpg', '.jpeg', '.png']:
+                if os.path.exists(img_name + ext):
+                    img_name = img_name + ext
+                    break
+            else:
+                raise FileNotFoundError(f"Image file '{img_name}' not found with common extensions.")
+        image = Image.open(img_name).convert('RGB')
+        label = self.data_frame.iloc[idx, 1]
+        label_idx = class_to_idx[label]
+        label_one_hot = np.zeros(len(classes), dtype=np.float32)
+        label_one_hot[label_idx] = 1.0
         
         if self.transform:
             image = self.transform(image)
         
-        return image, torch.tensor(label)
-
-def get_data_loader(root_dir, batch_size, shuffle=True, num_workers=0):
-    transform = transforms.Compose([
-        transforms.Resize((32, 32)),
-        transforms.ToTensor(),
-        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))  # Adjust these values if necessary
-    ])
-    
-    dataset = CustomDataset(root_dir=root_dir, transform=transform)
-    data_loader = DataLoader(dataset, batch_size=batch_size, shuffle=shuffle, num_workers=num_workers)
-    
-    return data_loader
+        # Find the index of the highest value
+        max_index = np.argmax(label_one_hot)
+        return image, torch.tensor(max_index)
 
 
 def training_loop(n_epochs, optimizer, model, loss_fn, device, data_loader, max_grad_norm=1.0, timesteps=200, epoch_start=0, accumulation_steps=4):
@@ -95,7 +92,7 @@ def training_loop(n_epochs, optimizer, model, loss_fn, device, data_loader, max_
 
         print('{} Epoch {}, Training loss {}'.format(datetime.datetime.now(), epoch, loss_train / len(data_loader)))
         # Save model checkpoint every 20 epochs
-        if epoch % 20 == 0:
+        if epoch % 5 == 0:
             model_filename = f'cifar-diffusion-cts_epoch_cfg.pth'
             model_path = os.path.join('weights/', model_filename)
             torch.save({
@@ -107,6 +104,7 @@ def training_loop(n_epochs, optimizer, model, loss_fn, device, data_loader, max_
         # Optional: Generate samples every 5 epochs
         if epoch % 5 == 0:
             reverse_diffusion_cfg(model, 30, torch.tensor([[5]], dtype=torch.int32), 5, device = device,size=(32, 32), show = True)
+            reverse_diffusion_cfg(model, 30, torch.tensor([[5]], dtype=torch.int32), 0, device = device,size=(32, 32), show = True)
 
 if __name__ == '__main__':
     timesteps = 1000
@@ -117,28 +115,51 @@ if __name__ == '__main__':
     elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
         device = "mps"
     print(f"using device: {device}")
-    model = UnetConditional()
+    config = Config(width=64)
+    model = UnetConditional(config)
     model.to(device)
     optimizer = optim.AdamW(model.parameters(), lr=3e-4)
     loss_fn = nn.MSELoss().to(device)
     print("param count: ", count_parameters(model))
 
-    reverse_diffusion_cfg(model, 30, torch.tensor([[8]], dtype=torch.int32), 5, device = device,size=(32, 32), show = True)
+    #reverse_diffusion_cfg(model, 30, torch.tensor([[8]], dtype=torch.int32), 5, device = device,size=(32, 32), show = True)
 
-    root_dir = '/Users/ayanfe/Downloads/archive-2/trainingSet/trainingSet'  # Replace with the path to your dataset
-    batch_size = 64
-    dataloader = get_data_loader(root_dir, batch_size)
+    # Define the transformations
+    transform = transforms.Compose([
+        transforms.Resize((32, 32)),  # Resize the image to 64x64 pixels
+        transforms.ToTensor(),       # Convert the image to a PyTorch tensor
+        transforms.Normalize((0.4907, 0.4815, 0.4469),(0.1903, 0.1881, 0.1914))
+    ])
 
+    # Create the dataset
+    csv_file = '/Users/ayanfe/Documents/Datasets/cifar-10/train/trainLabels.csv'  # Path to the CSV file
+    root_dir = '/Users/ayanfe/Documents/Datasets/cifar-10/train'         # Directory containing the images and CSV file
+    dataset = CustomImageDataset(csv_file=csv_file, root_dir=root_dir, transform=transform)
+
+
+    # Create the dataloader
+    dataloader = DataLoader(dataset, batch_size=64, shuffle=True)
+
+    # Optionally load model weights if needed
+    model_path = "weights/cifar-diffusion-cts_epoch_cfg.pth"
+    #checkpoint = torch.load(model_path)
+    #model.load_state_dict(checkpoint['model_state_dict'])
+    #optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+    #epoch = checkpoint['epoch']
+    reverse_diffusion_cfg(model,30,torch.tensor([[8]],dtype=torch.int32),5,size=(32,32),show=True)
+    
+    
     training_loop(
-    n_epochs=1000,
-    optimizer=optimizer,
-    model=model,
-    loss_fn=loss_fn,
-    device=device,
-    data_loader=dataloader,
-    timesteps=timesteps,
-    epoch_start=0,
-    accumulation_steps= 1  # Adjust this value as needed
+        n_epochs=1000,
+        optimizer=optimizer,
+        model=model,
+        loss_fn=loss_fn,
+        device=device,
+        data_loader=dataloader,
+        timesteps=timesteps,
+        epoch_start=0,
+        accumulation_steps= 1  # Adjust this value as needed
     )
+    
 
 
