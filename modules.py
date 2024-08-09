@@ -14,10 +14,7 @@ class ResNet(nn.Module):
         self.num_channels = out_channels
         self.in_channels = in_channels
         self.network = nn.Sequential(
-            nn.GroupNorm(4,in_channels),
-            nn.SiLU(),
             nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1),
-            nn.GroupNorm(4,out_channels),
             nn.SiLU(),
             nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1)
         )
@@ -76,40 +73,25 @@ class SelfAttention(nn.Module):
     def forward(self, x):
         x_size = x.shape[-1]
         batch_size = x.shape[0]
-        x = x.view(batch_size, self.channels, -1).swapaxes(1, 2)
+        # Using reshape instead of view
+        x = x.reshape(batch_size, self.channels, -1).swapaxes(1, 2)
         x_ln = self.ln(x)
         attention_value, _ = self.mha(x_ln, x_ln, x_ln)
         attention_value = attention_value + x
         attention_value = self.ff_self(attention_value) + attention_value
-        return attention_value.swapaxes(2, 1).reshape(batch_size, -1, x_size, x_size)
+        return attention_value.swapaxes(2, 1).reshape(batch_size, self.channels, x_size, x_size)
     
-class Attention(nn.Module):
-    def __init__(self, num_heads = 4,in_dim=16) -> None:
-        super().__init__()
-        self.num_heads = num_heads
-        self.in_dim = in_dim
-        self.to_qkv = nn.Conv2d(in_dim,in_dim*3, kernel_size=3, padding=1)
-        self.last_layer = nn.Conv2d(in_dim,in_dim,kernel_size=3,padding=1)
-
-    def forward(self,x):
-        qkv = self.to_qkv(x)
-        q,k,v = torch.tensor_split(qkv,3,dim=1)
-        qk = torch.mul(q,k)
-        qk = qk/(self.in_dim**0.5)
-        qk = F.softmax(qk)
-        qkv = torch.mul(qk,v)
-        out = self.last_layer(qkv)
-        return out
-
        
 class DownBlock(nn.Module):
     def __init__(self,in_channels,out_channels,use_att = True) -> None:
         super().__init__()
         self.in_channels = in_channels
         self.out_channels = out_channels
-        self.maxpool = nn.MaxPool2d(2)
+        self.maxpool = self.up = nn.Sequential(
+            nn.MaxPool2d(2),
+            nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1),
+        )
         self.inResnet = ResNet(in_channels,out_channels)
-        self.outResnet = ResNet(out_channels,out_channels)
         self.att = SelfAttention(out_channels)
         self.proj = nn.Sequential(
             nn.SiLU(),
@@ -122,7 +104,6 @@ class DownBlock(nn.Module):
         proj_exp = proj.view(proj.size(0),proj.size(1),1,1)
         out = torch.add(img, proj_exp)
         out = F.silu(self.inResnet(out))
-        out = self.outResnet(out)
         out = self.maxpool(out)
         if(self.use_att):
             out = self.att(out)
@@ -134,38 +115,36 @@ class UpBlock(nn.Module):
         self.in_channels = in_channels
         self.out_channels = out_channels
         self.inResnet = ResNet(in_channels*2,out_channels)
-        self.att = SelfAttention(in_channels)
-        self.outResnet = ResNet(out_channels,out_channels)
+        self.att = SelfAttention(out_channels)
         self.proj = nn.Sequential(
             nn.SiLU(),
             nn.Linear(32,in_channels*2)
         )
-        self.up = nn.Upsample(scale_factor=2, mode="bilinear", align_corners=True)
+        self.up = nn.Sequential(
+            nn.Upsample(scale_factor=2, mode="bilinear", align_corners=True),
+            nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1),
+        )
         self.use_att = use_att
 
     def forward(self,img,skip,t):
         proj = self.proj(t)
         proj_exp = proj.view(proj.size(0),proj.size(1),1,1)
         out = torch.cat((img,skip),dim=1)
-        
         out = torch.add(out, proj_exp)
 
         out = F.silu(self.inResnet(out))
-        out = self.outResnet(out)
         out = self.up(out)
-
         if(self.use_att):
             out = self.att(out)
         return out
 
 class MidBlock(nn.Module):
-    def __init__(self,in_channels,out_channels,use_att = False) -> None:
+    def __init__(self,in_channels,out_channels,use_att = True) -> None:
         super().__init__()
         self.in_channels = in_channels
         self.out_channels = out_channels
         self.inResnet = ResNet(in_channels,out_channels)
-        self.att = Attention(in_dim=out_channels)
-        self.outResnet = ResNet(out_channels,out_channels)
+        self.att = SelfAttention(out_channels)
         self.out_conv = nn.Conv2d(in_channels,out_channels,1)
         self.proj = nn.Sequential(
             nn.SiLU(),
@@ -179,7 +158,6 @@ class MidBlock(nn.Module):
         out = torch.add(img, proj_exp)
 
         out = F.silu(self.inResnet(out))
-        out = self.outResnet(out)
         if(self.use_att):
             out = self.att.forward(out)
 
