@@ -99,10 +99,13 @@ class DownBlock(nn.Module):
         )
         self.use_att = use_att
         
-    def forward(self,img,t):
-        proj = self.proj(t)
-        proj_exp = proj.view(proj.size(0),proj.size(1),1,1)
-        out = torch.add(img, proj_exp)
+    def forward(self,img,t=None):
+        out = img
+        if t != None:
+            proj = self.proj(t)
+            proj_exp = proj.view(proj.size(0),proj.size(1),1,1)
+            out = torch.add(img, proj_exp)
+        
         out = F.silu(self.inResnet(out))
         out = self.maxpool(out)
         if(self.use_att):
@@ -126,11 +129,14 @@ class UpBlock(nn.Module):
         )
         self.use_att = use_att
 
-    def forward(self,img,skip,t):
-        proj = self.proj(t)
-        proj_exp = proj.view(proj.size(0),proj.size(1),1,1)
+    def forward(self,img,skip,t=None):
         out = torch.cat((img,skip),dim=1)
-        out = torch.add(out, proj_exp)
+
+        if t != None:
+            proj = self.proj(t)
+            proj_exp = proj.view(proj.size(0),proj.size(1),1,1)
+            
+            out = torch.add(out, proj_exp)
 
         out = F.silu(self.inResnet(out))
         out = self.up(out)
@@ -152,10 +158,12 @@ class MidBlock(nn.Module):
         )
         self.use_att = use_att
         
-    def forward(self,img,t):
-        proj = self.proj(t)
-        proj_exp = proj.view(proj.size(0),proj.size(1),1,1)
-        out = torch.add(img, proj_exp)
+    def forward(self,img,t = None):
+        out = img
+        if t != None:
+            proj = self.proj(t)
+            proj_exp = proj.view(proj.size(0),proj.size(1),1,1)
+            out = torch.add(img, proj_exp)
 
         out = F.silu(self.inResnet(out))
         if(self.use_att):
