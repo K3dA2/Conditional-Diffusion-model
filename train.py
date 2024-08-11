@@ -12,6 +12,25 @@ import torch.nn.utils as utils
 from model import UnetConditional,Config
 from utils import forward_cosine_noise, reverse_diffusion_cfg, count_parameters,reverse_diffusion
 import pandas as pd
+import matplotlib.pyplot as plt
+
+
+def show_images_and_noise(images, noise, num_images=5):
+    images = images[:num_images].cpu().detach().numpy().transpose(0, 2, 3, 1)
+    noise = noise[:num_images].cpu().detach().numpy().transpose(0, 2, 3, 1)
+    
+    fig, axes = plt.subplots(2, num_images, figsize=(15, 6))
+    
+    for i in range(num_images):
+        axes[0, i].imshow((images[i] * 0.5) + 0.5)  # Denormalize to [0, 1]
+        axes[0, i].axis('off')
+        axes[0, i].set_title("Original Image")
+        
+        axes[1, i].imshow((noise[i] * 0.5) + 0.5)  # Denormalize to [0, 1]
+        axes[1, i].axis('off')
+        axes[1, i].set_title("Noise")
+
+    plt.show()
 
 # Define the list of classes
 classes = ['airplane', 'automobile', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship', 'truck']
@@ -63,11 +82,14 @@ def training_loop(n_epochs, optimizer, model, loss_fn, device, data_loader, max_
         for batch_idx, (imgs, labels) in enumerate(progress_bar):
             imgs = imgs.to(device)
             labels = labels.to(device)
+            
             # Generate timestamps
             t = torch.randint(0, timesteps, (imgs.size(0),), dtype=torch.float32).to(device) / timesteps
             t = t.view(-1, 1)
 
             imgs, noise = forward_cosine_noise(None, imgs, t, device= device)
+
+            #show_images_and_noise(imgs, noise, num_images=5)
 
             if np.random.random() <= 0.1:
                 outputs = model(imgs, t)
@@ -102,9 +124,9 @@ def training_loop(n_epochs, optimizer, model, loss_fn, device, data_loader, max_
             }, model_path)
 
         # Optional: Generate samples every 5 epochs
-        if epoch % 5 == 0:
-            reverse_diffusion_cfg(model, 30, torch.tensor([[5]], dtype=torch.int32), 5, device = device,size=(32, 32), show = True)
-            reverse_diffusion_cfg(model, 30, torch.tensor([[5]], dtype=torch.int32), 0, device = device,size=(32, 32), show = True)
+        if epoch % 150 == 0:
+            reverse_diffusion_cfg(model, 30, torch.tensor([[3]], dtype=torch.int32), 7, device = device,size=(32, 32), show = True)
+            reverse_diffusion_cfg(model, 30, torch.tensor([[3]], dtype=torch.int32), 0, device = device,size=(32, 32), show = True)
 
 if __name__ == '__main__':
     timesteps = 1000
@@ -115,7 +137,7 @@ if __name__ == '__main__':
     elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
         device = "mps"
     print(f"using device: {device}")
-    config = Config(width=64)
+    config = Config(width=32)
     model = UnetConditional(config)
     model.to(device)
     optimizer = optim.AdamW(model.parameters(), lr=3e-4)
@@ -142,13 +164,14 @@ if __name__ == '__main__':
 
     # Optionally load model weights if needed
     model_path = "weights/cifar-diffusion-cts_epoch_cfg.pth"
-    #checkpoint = torch.load(model_path)
-    #model.load_state_dict(checkpoint['model_state_dict'])
-    #optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-    #epoch = checkpoint['epoch']
-    reverse_diffusion_cfg(model,30,torch.tensor([[8]],dtype=torch.int32),5,size=(32,32),show=True)
+    checkpoint = torch.load(model_path)
+    model.load_state_dict(checkpoint['model_state_dict'])
+    optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+    epoch = checkpoint['epoch']
+    reverse_diffusion_cfg(model,30,torch.tensor([[6]],dtype=torch.int32),5,size=(32,32),show=True, device=device)
+    reverse_diffusion_cfg(model, 30, torch.tensor([[6]], dtype=torch.int32), 0, device = device,size=(32, 32), show = True)
     
-    
+    '''
     training_loop(
         n_epochs=1000,
         optimizer=optimizer,
@@ -157,9 +180,10 @@ if __name__ == '__main__':
         device=device,
         data_loader=dataloader,
         timesteps=timesteps,
-        epoch_start=0,
+        epoch_start = epoch + 1,
         accumulation_steps= 1  # Adjust this value as needed
     )
+    '''
     
 
 
