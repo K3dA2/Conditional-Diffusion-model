@@ -6,18 +6,16 @@ import unittest
 from modules import DownBlock,UpBlock,MidBlock,TimeEmb
 
 class Config:
-    def __init__(self, width=32, c_in=3, num_classes=10, emb_dim = 3):
+    def __init__(self, width=32, c_in=3, num_classes=10):
         self.width = width
         self.c_in = c_in
         self.num_classes = num_classes
-        self.emb_dim = emb_dim
 
 
 class UnetConditional(nn.Module):
     def __init__(self, config: Config) -> None:
         super().__init__()
         width = config.width
-        emb_dim = config.emb_dim
         c_in = config.c_in
         num_classes = config.num_classes
 
@@ -75,6 +73,7 @@ class Unet(nn.Module):
         super().__init__()
         width = config.width
         c_in = config.c_in
+        num_classes = config.num_classes
 
         self.downblk = DownBlock(width, width * 2)
         self.downblk1 = DownBlock(width * 2, width * 4)
@@ -91,9 +90,14 @@ class Unet(nn.Module):
         self.res.weight.data.fill_(0)
 
         self.timeEmb = TimeEmb()
+        self.label_emb = nn.Embedding(num_classes, 32)
 
-    def forward(self, img, t):
+    def forward(self, img, t, y = None):
         t = self.timeEmb(t)
+        
+        if y is not None:
+            class_emb = self.label_emb(y).squeeze(1)
+            t += class_emb
 
         out = self.in_conv(img)
         x = out
