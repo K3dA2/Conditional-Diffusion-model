@@ -132,8 +132,13 @@ def reverse_diffusion(model, diffusion_steps, device=device, show=True, size=(32
         
         current_images = (next_signal_rates.view(-1, 1, 1, 1) * pred_images + next_noise_rates.view(-1, 1, 1, 1) * pred_noises)
 
-    pred_images = (current_images.clamp(-1, 1) + 1) / 2
-
+    #pred_images = (current_images.clamp(-1, 1) + 1) / 2
+    pred_images = current_images
+    # Unnormalize the images
+    mean = torch.tensor([0.7002, 0.6099, 0.6036]).view(1, 3, 1, 1).to(device)
+    std = torch.tensor([0.2195, 0.2234, 0.2097]).view(1, 3, 1, 1).to(device)
+    pred_images = pred_images * std + mean
+    
     if show:
         plt.imshow(pred_images[0].detach().cpu().permute(1, 2, 0).numpy())
         plt.show()
