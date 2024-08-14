@@ -115,35 +115,35 @@ def count_parameters(model):
 def reverse_diffusion(model, diffusion_steps, device=device, show=True, size=(32,32)):
     step_size = 1.0 / diffusion_steps
     current_images = torch.randn(1, 3, size[0], size[1]).to(device)
-    model.eval()
+    with torch.no_grad():
+        model.eval()
 
-    for step in range(diffusion_steps):
-        diffusion_times = torch.ones((1, 1), device=device) - step * step_size 
+        for step in range(diffusion_steps):
+            diffusion_times = torch.ones((1, 1), device=device) - step * step_size 
 
-        # Ensure model and all operations are on the same device
-        pred_noises = model(current_images, diffusion_times)
+            # Ensure model and all operations are on the same device
+            pred_noises = model(current_images, diffusion_times)
+            
+            # Move cosine calculation to the device
+            noise_rates, signal_rates = cosine(diffusion_times)
+
+            pred_images = (current_images - noise_rates.view(-1, 1, 1, 1) * pred_noises) / signal_rates.view(-1, 1, 1, 1)
+            next_diffusion_times = diffusion_times - step_size
+            next_noise_rates, next_signal_rates = cosine(next_diffusion_times)
+            
+            current_images = (next_signal_rates.view(-1, 1, 1, 1) * pred_images + next_noise_rates.view(-1, 1, 1, 1) * pred_noises)
+
+        #pred_images = (current_images.clamp(-1, 1) + 1) / 2
+        pred_images = current_images
+        # Unnormalize the images
+        mean = torch.tensor([0.7002, 0.6099, 0.6036]).view(1, 3, 1, 1).to(device)
+        std = torch.tensor([0.2195, 0.2234, 0.2097]).view(1, 3, 1, 1).to(device)
+        pred_images = pred_images * std + mean
         
-        # Move cosine calculation to the device
-        noise_rates, signal_rates = cosine(diffusion_times)
-
-        pred_images = (current_images - noise_rates.view(-1, 1, 1, 1) * pred_noises) / signal_rates.view(-1, 1, 1, 1)
-        next_diffusion_times = diffusion_times - step_size
-        next_noise_rates, next_signal_rates = cosine(next_diffusion_times)
-        
-        current_images = (next_signal_rates.view(-1, 1, 1, 1) * pred_images + next_noise_rates.view(-1, 1, 1, 1) * pred_noises)
-
-    #pred_images = (current_images.clamp(-1, 1) + 1) / 2
-    pred_images = current_images
-    # Unnormalize the images
-    mean = torch.tensor([0.7002, 0.6099, 0.6036]).view(1, 3, 1, 1).to(device)
-    std = torch.tensor([0.2195, 0.2234, 0.2097]).view(1, 3, 1, 1).to(device)
-    pred_images = pred_images * std + mean
-    
-    if show:
-        plt.imshow(pred_images[0].detach().cpu().permute(1, 2, 0).numpy())
-        plt.show()
-
-    return pred_images
+        if show:
+            plt.imshow(pred_images[0].detach().cpu().permute(1, 2, 0).numpy())
+            plt.show()
+        return pred_images
 
 def reverse_diffusion_cfg(model, diffusion_steps, category, cfg_scale, device="cpu", show=False, size=(32, 32)):
     step_size = 1.0 / diffusion_steps
