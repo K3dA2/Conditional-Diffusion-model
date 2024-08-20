@@ -11,10 +11,16 @@ This ResNet class is intended to be used as the smallest unit of the block class
 class ResNet(nn.Module):
     def __init__(self, in_channels = 3 ,out_channels = 32):
         super().__init__()
+        num_groups = 4
+        if in_channels < 4:
+            num_groups = in_channels
         self.num_channels = out_channels
         self.in_channels = in_channels
         self.network = nn.Sequential(
+            nn.GroupNorm(num_groups,in_channels),
+            nn.SiLU(),
             nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1),
+            nn.GroupNorm(num_groups,out_channels),
             nn.SiLU(),
             nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1)
         )
@@ -61,7 +67,7 @@ class SelfAttention(nn.Module):
     def __init__(self, channels):
         super(SelfAttention, self).__init__()
         self.channels = channels
-        self.mha = nn.MultiheadAttention(channels, 4, batch_first=True)
+        self.mha = nn.MultiheadAttention(channels, 8, batch_first=True)
         self.ln = nn.LayerNorm([channels])
         self.ff_self = nn.Sequential(
             nn.LayerNorm([channels]),
@@ -69,6 +75,7 @@ class SelfAttention(nn.Module):
             nn.GELU(),
             nn.Linear(channels, channels),
         )
+        self.dropout = nn.Dropout2d(0.2)
 
     def forward(self, x):
         x_size = x.shape[-1]
@@ -78,6 +85,7 @@ class SelfAttention(nn.Module):
         x_ln = self.ln(x)
         attention_value, _ = self.mha(x_ln, x_ln, x_ln)
         attention_value = attention_value + x
+        attention_value = self.dropout(attention_value)
         attention_value = self.ff_self(attention_value) + attention_value
         return attention_value.swapaxes(2, 1).reshape(batch_size, self.channels, x_size, x_size)
     
@@ -92,6 +100,7 @@ class DownBlock(nn.Module):
             nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1),
         )
         self.inResnet = ResNet(in_channels,out_channels)
+        self.outResnet = ResNet(out_channels,out_channels)
         self.att = SelfAttention(out_channels)
         self.proj = nn.Sequential(
             nn.SiLU(),
@@ -110,6 +119,8 @@ class DownBlock(nn.Module):
         out = self.maxpool(out)
         if(self.use_att):
             out = self.att(out)
+        
+        out = self.outResnet(out)
         return out,out
 
 class UpBlock(nn.Module):
@@ -118,6 +129,7 @@ class UpBlock(nn.Module):
         self.in_channels = in_channels
         self.out_channels = out_channels
         self.inResnet = ResNet(in_channels*2,out_channels)
+        self.outResnet = ResNet(out_channels,out_channels)
         self.att = SelfAttention(out_channels)
         self.proj = nn.Sequential(
             nn.SiLU(),
@@ -142,6 +154,8 @@ class UpBlock(nn.Module):
         out = self.up(out)
         if(self.use_att):
             out = self.att(out)
+        out = self.outResnet(out)
+
         return out
 
 class MidBlock(nn.Module):
@@ -151,7 +165,7 @@ class MidBlock(nn.Module):
         self.out_channels = out_channels
         self.inResnet = ResNet(in_channels,out_channels)
         self.att = SelfAttention(out_channels)
-        self.out_conv = nn.Conv2d(in_channels,out_channels,1)
+        self.outResnet = ResNet(out_channels,out_channels)
         self.proj = nn.Sequential(
             nn.SiLU(),
             nn.Linear(32,in_channels)
@@ -168,7 +182,7 @@ class MidBlock(nn.Module):
         out = F.silu(self.inResnet(out))
         if(self.use_att):
             out = self.att.forward(out)
-
+        out = self.outResnet(out)
         return out
 
         
