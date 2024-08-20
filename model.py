@@ -89,9 +89,9 @@ class Unet(nn.Module):
             self.downblks.append(DownBlock(in_channels, out_channels))
         
         # Mid blocks
-        self.midblks.append(MidBlock(width * (2**depth), width * (2**(depth+1))))
-        self.midblks.append(MidBlock(width * (2**(depth+1)), width * (2**(depth+1))))
-        self.midblks.append(MidBlock(width * (2**(depth+1)), width * (2**depth)))
+        self.midblks.append(MidBlock(width * (2**depth), width * (2**(depth))))
+        self.midblks.append(MidBlock(width * (2**(depth)), width * (2**(depth))))
+        self.midblks.append(MidBlock(width * (2**(depth)), width * (2**depth)))
 
         # Upsampling blocks
         for i in range(depth):
@@ -116,16 +116,16 @@ class Unet(nn.Module):
 
         # Downsampling
         for downblk in self.downblks:
-            out, skip = downblk(out)
+            out, skip = downblk(out,t)
             skips.append(skip)
         
         # Mid blocks
         for midblk in self.midblks:
-            out = midblk(out)
+            out = midblk(out,t)
         
         # Upsampling
         for i, upblk in enumerate(self.upblks):
-            out = upblk(out, skips[-(i+1)])
+            out = upblk(out, skips[-(i+1)],t)
         
         out = torch.cat((out, x), dim=1)
         out = self.res(out)
