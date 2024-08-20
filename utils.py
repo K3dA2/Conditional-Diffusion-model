@@ -112,7 +112,7 @@ def forward_noise_test():
 def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
-def reverse_diffusion(model, diffusion_steps, device=device, show=True, size=(32,32)):
+def reverse_diffusion(model, diffusion_steps, device=device, mean = [0.7002, 0.6099, 0.6036], sd = [0.2195, 0.2234, 0.2097], show=True, size=(32,32)):
     step_size = 1.0 / diffusion_steps
     current_images = torch.randn(1, 3, size[0], size[1]).to(device)
     with torch.no_grad():
@@ -136,8 +136,9 @@ def reverse_diffusion(model, diffusion_steps, device=device, show=True, size=(32
         #pred_images = (current_images.clamp(-1, 1) + 1) / 2
         pred_images = current_images
         # Unnormalize the images
-        mean = torch.tensor([0.7002, 0.6099, 0.6036]).view(1, 3, 1, 1).to(device)
-        std = torch.tensor([0.2195, 0.2234, 0.2097]).view(1, 3, 1, 1).to(device)
+        mean = torch.tensor(mean).view(1, 3, 1, 1).to(device)
+        std = torch.tensor(sd).view(1, 3, 1, 1).to(device)
+        
         pred_images = pred_images * std + mean
         
         if show:
@@ -145,7 +146,7 @@ def reverse_diffusion(model, diffusion_steps, device=device, show=True, size=(32
             plt.show()
         return pred_images
 
-def reverse_diffusion_cfg(model, diffusion_steps, category, cfg_scale, device="cpu", show=False, size=(32, 32)):
+def reverse_diffusion_cfg(model, diffusion_steps, category, cfg_scale, mean = [0.4907, 0.4815, 0.4469], sd = [0.1903, 0.1881, 0.1914],device="cpu", show=False, size=(32, 32)):
     step_size = 1.0 / diffusion_steps
     current_images = torch.randn(1, 3, size[0], size[1]).to(device)
     model.eval()
@@ -170,8 +171,8 @@ def reverse_diffusion_cfg(model, diffusion_steps, category, cfg_scale, device="c
     model.train()
 
     # Denormalize the images using the provided mean and standard deviation
-    mean = torch.tensor([0.4907, 0.4815, 0.4469], device=device).view(1, 3, 1, 1)
-    std = torch.tensor([0.1903, 0.1881, 0.1914], device=device).view(1, 3, 1, 1)
+    mean = torch.tensor(mean, device=device).view(1, 3, 1, 1)
+    std = torch.tensor(sd, device=device).view(1, 3, 1, 1)
     pred_images = pred_images * std + mean  # Denormalize
     pred_images = pred_images.clamp(0, 1) * 255  # Scale to 0-255
 
