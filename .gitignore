@@ -164,8 +164,8 @@ plot.ipynb
 cifar-diffusion-loss.txt
 lr_finder.py
 train_test.py
-train1.py
-RRDM.py
-test.py
-test2.py
-test3.py
+train_flower.py
+train_mnist.py
+train_waifu.py
+waifu-diffusion-cts_epoch_cfg.pth
+waifu-diffusion-loss.txt
