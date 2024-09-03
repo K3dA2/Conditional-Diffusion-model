@@ -9,9 +9,9 @@ from tqdm import tqdm
 import datetime
 import os
 import torch.nn.utils as utils
-from model import UnetConditional,Config
+from model import UnetConditional,Config,Unet
 from utils import forward_cosine_noise, reverse_diffusion_cfg, count_parameters,reverse_diffusion
-import pandas as pd
+import random
 import matplotlib.pyplot as plt
 
 
@@ -32,48 +32,82 @@ def show_images_and_noise(images, noise, num_images=5):
 
     plt.show()
 
-# Define the list of classes
-classes = ['airplane', 'automobile', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship', 'truck']
-class_to_idx = {cls: idx for idx, cls in enumerate(classes)}
-
-# Custom dataset class
-class CustomImageDataset(Dataset):
-    def __init__(self, csv_file, root_dir, transform=None):
-        self.data_frame = pd.read_csv(csv_file)
-        self.data_frame.iloc[:, 0] = self.data_frame.iloc[:, 0].astype(str)  # Ensure the first column is string type
-        self.root_dir = root_dir
+class CustomDataset(Dataset):
+    def __init__(self, image_files, transform=None):
+        self.image_files = image_files
         self.transform = transform
-        
+
     def __len__(self):
-        return len(self.data_frame)
-    
+        return len(self.image_files)
+
     def __getitem__(self, idx):
-        img_name = os.path.join(self.root_dir, self.data_frame.iloc[idx, 0])
-        # Try adding common image extensions if the file is not found
-        if not os.path.exists(img_name):
-            for ext in ['.jpg', '.jpeg', '.png']:
-                if os.path.exists(img_name + ext):
-                    img_name = img_name + ext
-                    break
-            else:
-                raise FileNotFoundError(f"Image file '{img_name}' not found with common extensions.")
-        image = Image.open(img_name).convert('RGB')
-        label = self.data_frame.iloc[idx, 1]
-        label_idx = class_to_idx[label]
-        label_one_hot = np.zeros(len(classes), dtype=np.float32)
-        label_one_hot[label_idx] = 1.0
-        
+        image_path = self.image_files[idx]
+        image = Image.open(image_path).convert('RGB')
         if self.transform:
             image = self.transform(image)
-        
-        # Find the index of the highest value
-        max_index = np.argmax(label_one_hot)
-        return image, torch.tensor(max_index)
+        return image, 0  # Return a dummy label as it's not used
+
+def get_data_loader(path, batch_size, num_samples=None, shuffle=True):
+    # Define your transforms
+    transform = transforms.Compose([
+        transforms.Resize((64, 64)),
+        transforms.ToTensor(),
+        transforms.Normalize((0.7002, 0.6099, 0.6036), (0.2195, 0.2234, 0.2097))  # Adjust these values if you have RGB images
+    ])
+    
+    # Get the list of all image files in the root directory, excluding non-image files
+    valid_extensions = ('.jpg', '.jpeg', '.png', '.bmp', '.gif')
+    image_files = [os.path.join(path, f) for f in os.listdir(path) if f.lower().endswith(valid_extensions)]
+    
+    if len(image_files) == 0:
+        raise ValueError("No valid image files found in the specified directory.")
+
+    # If num_samples is not specified, use the entire dataset
+    if num_samples is None or num_samples > len(image_files):
+        num_samples = len(image_files)
+    elif num_samples <= 0:
+        raise ValueError("num_samples should be a positive integer.")
+
+    print("data length: ", len(image_files))
+    
+    # Generate a list of indices to sample from (ensure dataset size is not exceeded)
+    if shuffle:
+        indices = random.sample(range(len(image_files)), num_samples)
+    else:
+        indices = list(range(num_samples))
+    
+    # Create the subset dataset
+    subset_dataset = CustomDataset([image_files[i] for i in indices], transform=transform)
+    
+    # Create a DataLoader for the subset
+    data_loader = DataLoader(subset_dataset, batch_size=batch_size, shuffle=shuffle)
+    
+    return data_loader
 
 
-def training_loop(n_epochs, optimizer, model, loss_fn, device, data_loader, max_grad_norm=1.0, timesteps=200, epoch_start=0, accumulation_steps=4):
-    model.train()
+def validation_loop(model, loss_fn, device, val_loader):
+    model.eval()  # Set the model to evaluation mode
+    val_loss = 0.0
+    with torch.no_grad():  # Disable gradient calculation
+        for imgs, labels in val_loader:
+            imgs = imgs.to(device)
+            labels = labels.to(device)
+
+            # Generate timestamps
+            t = torch.randint(0, timesteps, (imgs.size(0),), dtype=torch.float32).to(device) / timesteps
+            t = t.view(-1, 1)
+
+            imgs, noise = forward_cosine_noise(None, imgs, t, device=device)
+            outputs = model(imgs, t)
+            loss = loss_fn(outputs, noise)
+
+            val_loss += loss.item()
+
+    return val_loss / len(val_loader)
+
+def training_loop(n_epochs, optimizer, model, loss_fn, device, data_loader, val_loader,max_grad_norm=1.0, timesteps=1000, epoch_start=0, accumulation_steps=4):
     for epoch in range(epoch_start, n_epochs + epoch_start):
+        model.train()
         loss_train = 0.0
 
         progress_bar = tqdm(data_loader, desc=f'Epoch {epoch}', unit=' batch')
@@ -89,12 +123,8 @@ def training_loop(n_epochs, optimizer, model, loss_fn, device, data_loader, max_
 
             imgs, noise = forward_cosine_noise(None, imgs, t, device= device)
 
-            #show_images_and_noise(imgs, noise, num_images=5)
 
-            if np.random.random() <= 0.1:
-                outputs = model(imgs, t)
-            else:
-                outputs = model(imgs, t, labels)
+            outputs = model(imgs, t)
 
             loss = loss_fn(outputs, noise)
 
@@ -109,13 +139,13 @@ def training_loop(n_epochs, optimizer, model, loss_fn, device, data_loader, max_
 
         # Save model checkpoint with the current epoch in the filename
 
-        with open("cifar-diffusion-loss.txt", "a") as file:
+        with open("waifu-diffusion-loss.txt", "a") as file:
             file.write(f"{loss_train / len(data_loader)}\n")
 
         print('{} Epoch {}, Training loss {}'.format(datetime.datetime.now(), epoch, loss_train / len(data_loader)))
         # Save model checkpoint every 20 epochs
-        if epoch % 5 == 0:
-            model_filename = f'cifar-diffusion-cts_epoch_cfg.pth'
+        if epoch % 1 == 0:
+            model_filename = f'64w-waifu-diffusion.pth'
             model_path = os.path.join('weights/', model_filename)
             torch.save({
                 'epoch': epoch,
@@ -123,10 +153,11 @@ def training_loop(n_epochs, optimizer, model, loss_fn, device, data_loader, max_
                 'optimizer_state_dict': optimizer.state_dict(),
             }, model_path)
 
-        # Optional: Generate samples every 5 epochs
-        if epoch % 150 == 0:
-            reverse_diffusion_cfg(model, 30, torch.tensor([[3]], dtype=torch.int32), 7, device = device,size=(32, 32), show = True)
-            reverse_diffusion_cfg(model, 30, torch.tensor([[3]], dtype=torch.int32), 0, device = device,size=(32, 32), show = True)
+        # Optional: Generate samples every 100 epochs
+        if epoch % 100 == 0:
+            with torch.no_grad():
+                reverse_diffusion(model,50, size=(64,64))
+                
 
 if __name__ == '__main__':
     timesteps = 1000
@@ -137,41 +168,34 @@ if __name__ == '__main__':
     elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
         device = "mps"
     print(f"using device: {device}")
-    config = Config(width=32)
-    model = UnetConditional(config)
+    config = Config(width=64)
+    model = Unet(config)
     model.to(device)
     optimizer = optim.AdamW(model.parameters(), lr=3e-4)
     loss_fn = nn.MSELoss().to(device)
     print("param count: ", count_parameters(model))
 
-    #reverse_diffusion_cfg(model, 30, torch.tensor([[8]], dtype=torch.int32), 5, device = device,size=(32, 32), show = True)
+    
+    path = ''
+    val_path = ''
+    model_path = ''
+    epoch = 0
 
-    # Define the transformations
-    transform = transforms.Compose([
-        transforms.Resize((32, 32)),  # Resize the image to 64x64 pixels
-        transforms.ToTensor(),       # Convert the image to a PyTorch tensor
-        transforms.Normalize((0.4907, 0.4815, 0.4469),(0.1903, 0.1881, 0.1914))
-    ])
-
-    # Create the dataset
-    csv_file = '/Users/ayanfe/Documents/Datasets/cifar-10/train/trainLabels.csv'  # Path to the CSV file
-    root_dir = '/Users/ayanfe/Documents/Datasets/cifar-10/train'         # Directory containing the images and CSV file
-    dataset = CustomImageDataset(csv_file=csv_file, root_dir=root_dir, transform=transform)
-
-
-    # Create the dataloader
-    dataloader = DataLoader(dataset, batch_size=64, shuffle=True)
-
+    dataloader = get_data_loader(path, batch_size=8, num_samples=20_000)
+    val_loader = get_data_loader(val_path,batch_size=8)
+    
+    '''
     # Optionally load model weights if needed
-    model_path = "weights/cifar-diffusion-cts_epoch_cfg.pth"
     checkpoint = torch.load(model_path)
     model.load_state_dict(checkpoint['model_state_dict'])
     optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
     epoch = checkpoint['epoch']
-    reverse_diffusion_cfg(model,30,torch.tensor([[6]],dtype=torch.int32),5,size=(32,32),show=True, device=device)
-    reverse_diffusion_cfg(model, 30, torch.tensor([[6]], dtype=torch.int32), 0, device = device,size=(32, 32), show = True)
-    
     '''
+    
+    with torch.no_grad():
+        reverse_diffusion(model,50, size=(64,64))
+
+    
     training_loop(
         n_epochs=1000,
         optimizer=optimizer,
@@ -179,11 +203,13 @@ if __name__ == '__main__':
         loss_fn=loss_fn,
         device=device,
         data_loader=dataloader,
+        val_loader= val_loader,
         timesteps=timesteps,
         epoch_start = epoch + 1,
         accumulation_steps= 1  # Adjust this value as needed
     )
-    '''
+    
+    
     
 
 
