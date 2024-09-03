@@ -9,7 +9,7 @@ from tqdm import tqdm
 import datetime
 import os
 import torch.nn.utils as utils
-from model import UnetConditional,Config,Unet
+from model import UnetClipConditional,Config,Unet
 from utils import forward_cosine_noise, reverse_diffusion_cfg, count_parameters,reverse_diffusion
 import random
 import matplotlib.pyplot as plt
