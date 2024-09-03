@@ -75,13 +75,14 @@ class SelfAttention(nn.Module):
             nn.GELU(),
             nn.Linear(channels, channels),
         )
-        self.dropout = nn.Dropout2d(0.2)
+        self.dropout = nn.Dropout(0.2)
 
     def forward(self, x):
         x_size = x.shape[-1]
         batch_size = x.shape[0]
         # Using reshape instead of view
         x = x.reshape(batch_size, self.channels, -1).swapaxes(1, 2)
+       
         x_ln = self.ln(x)
         attention_value, _ = self.mha(x_ln, x_ln, x_ln)
         attention_value = attention_value + x
@@ -100,7 +101,6 @@ class DownBlock(nn.Module):
             nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1),
         )
         self.inResnet = ResNet(in_channels,out_channels)
-        self.outResnet = ResNet(out_channels,out_channels)
         self.att = SelfAttention(out_channels)
         self.proj = nn.Sequential(
             nn.SiLU(),
@@ -119,8 +119,6 @@ class DownBlock(nn.Module):
         out = self.maxpool(out)
         if(self.use_att):
             out = self.att(out)
-        
-        out = self.outResnet(out)
         return out,out
 
 class UpBlock(nn.Module):
@@ -129,7 +127,6 @@ class UpBlock(nn.Module):
         self.in_channels = in_channels
         self.out_channels = out_channels
         self.inResnet = ResNet(in_channels*2,out_channels)
-        self.outResnet = ResNet(out_channels,out_channels)
         self.att = SelfAttention(out_channels)
         self.proj = nn.Sequential(
             nn.SiLU(),
@@ -154,8 +151,6 @@ class UpBlock(nn.Module):
         out = self.up(out)
         if(self.use_att):
             out = self.att(out)
-        out = self.outResnet(out)
-
         return out
 
 class MidBlock(nn.Module):
@@ -165,7 +160,6 @@ class MidBlock(nn.Module):
         self.out_channels = out_channels
         self.inResnet = ResNet(in_channels,out_channels)
         self.att = SelfAttention(out_channels)
-        self.outResnet = ResNet(out_channels,out_channels)
         self.proj = nn.Sequential(
             nn.SiLU(),
             nn.Linear(32,in_channels)
@@ -182,7 +176,6 @@ class MidBlock(nn.Module):
         out = F.silu(self.inResnet(out))
         if(self.use_att):
             out = self.att.forward(out)
-        out = self.outResnet(out)
         return out
 
         
@@ -213,12 +206,12 @@ class TestResNet(unittest.TestCase):
         print(output.shape)
         self.assertEqual(output.shape,(200,32))
         print(output)
-        
+        '''
 
-        model = SelfAttention(16,64)
-        input_tensor = torch.randn(3, 16, 64, 64)
+        model = SelfAttention(64)
+        input_tensor = torch.randn(3, 64, 64, 64)
         output = model.forward(input_tensor)
-        self.assertEqual(output.shape,(3,16,64,64))
+        self.assertEqual(output.shape,(3,64,64,64))
         '''
         model = UpBlock(32,16)
         #input_tensor = torch.randn(1, 16, 64, 64)
@@ -228,7 +221,7 @@ class TestResNet(unittest.TestCase):
         #tm = torch.unsqueeze(tm, dim=1)
         output = model.forward(input_tensor,input_tensor1,tm)
         self.assertEqual(output.shape,(1,16,32,32))
-        '''
+        
         model = DownBlock(3,16)
         #input_tensor = torch.randn(1, 16, 64, 64)
         input_tensor = torch.ones([3,3,16,16], dtype=torch.float32)
